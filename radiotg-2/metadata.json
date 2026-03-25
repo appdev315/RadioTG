@@ -1,0 +1,5 @@
+{
+  "name": "RadioTG",
+  "description": "Слушайте более 700 радиостанций с сайта radiopotok.ru прямо в Telegram.",
+  "requestFramePermissions": []
+}
