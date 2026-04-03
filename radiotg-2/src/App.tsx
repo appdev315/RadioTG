@@ -11,6 +11,7 @@ import { StationList } from './components/StationList';
 import { Player } from './components/Player';
 import { CategoryFilter } from './components/CategoryFilter';
 import { translations, Language } from './i18n';
+import Hls from 'hls.js';
 
 export interface Station {
   id: string;
@@ -55,7 +56,10 @@ export default function App() {
     }
   });
   
+  const [isBuffering, setIsBuffering] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     localStorage.setItem('radiotg_favorites', JSON.stringify(favorites));
@@ -102,18 +106,31 @@ export default function App() {
     }
   }, [volume]);
 
+  const cleanupHls = () => {
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+  };
+
   const handlePlayPause = (forcePause?: boolean) => {
     if (!audioRef.current) return;
     
     if (isPlaying || forcePause === true) {
       audioRef.current.pause();
       setIsPlaying(false);
+      setIsBuffering(false);
     } else {
       audioRef.current.play().then(() => {
         setIsPlaying(true);
       }).catch(e => {
         console.error("Playback failed", e);
         setIsPlaying(false);
+        setIsBuffering(false);
       });
     }
   };
@@ -124,15 +141,64 @@ export default function App() {
       return;
     }
     
+    cleanupHls();
     setCurrentStation(station);
     setIsPlaying(true);
+    setIsBuffering(true);
     
     if (audioRef.current) {
-      audioRef.current.src = station.stream;
+      const url = station.stream;
+      const isHls = url.includes('.m3u8') || url.includes('/playlist.m3u8');
+      
+      if (isHls && Hls.isSupported()) {
+        const hls = new Hls({
+          liveSyncDurationCount: 3,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 0, // No need for radio usually
+        });
+        
+        hls.loadSource(url);
+        hls.attachMedia(audioRef.current);
+        hlsRef.current = hls;
+
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.log("fatal network error encountered, try to recover");
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.log("fatal media error encountered, try to recover");
+                hls.recoverMediaError();
+                break;
+              default:
+                cleanupHls();
+                break;
+            }
+          }
+        });
+      } else {
+        audioRef.current.src = url;
+      }
+      
       audioRef.current.play().catch(e => {
         console.error("Playback failed", e);
         setIsPlaying(false);
+        setIsBuffering(false);
       });
+    }
+  };
+
+  const handleRetry = () => {
+    if (currentStation && audioRef.current) {
+      console.log("Retrying playback for station:", currentStation.name);
+      const wasPlaying = isPlaying;
+      handleStationSelect(currentStation);
+      if (!wasPlaying) setIsPlaying(false);
     }
   };
 
@@ -186,6 +252,7 @@ export default function App() {
       <Player 
         station={currentStation} 
         isPlaying={isPlaying} 
+        isBuffering={isBuffering}
         onPlayPause={handlePlayPause} 
         volume={volume}
         onVolumeChange={setVolume}
@@ -202,7 +269,21 @@ export default function App() {
       <audio 
         ref={audioRef}
         onEnded={() => setIsPlaying(false)}
-        onError={() => setIsPlaying(false)}
+        onError={() => {
+          setIsPlaying(false);
+          setIsBuffering(false);
+        }}
+        onWaiting={() => setIsBuffering(true)}
+        onPlaying={() => setIsBuffering(false)}
+        onCanPlay={() => setIsBuffering(false)}
+        onStalled={() => {
+          if (isPlaying) {
+            console.log("Stream stalled, attempting recovery in 2s...");
+            setIsBuffering(true);
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = setTimeout(handleRetry, 2000);
+          }
+        }}
       />
     </div>
   );

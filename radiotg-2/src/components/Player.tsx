@@ -8,6 +8,7 @@ import { twMerge } from 'tailwind-merge';
 interface PlayerProps {
   station: Station | null;
   isPlaying: boolean;
+  isBuffering?: boolean;
   onPlayPause: (forcePause?: boolean) => void;
   volume: number;
   onVolumeChange: (volume: number) => void;
@@ -24,6 +25,7 @@ interface PlayerProps {
 export function Player({ 
   station, 
   isPlaying, 
+  isBuffering,
   onPlayPause, 
   volume,
   onVolumeChange,
@@ -127,7 +129,12 @@ export function Player({
                 {station.name}
               </div>
               <div className="text-xs text-[var(--tg-theme-hint-color)] truncate flex items-center gap-2">
-                {isPlaying ? (
+                {isBuffering ? (
+                  <span className="flex items-center gap-1.5 text-[var(--tg-theme-button-color)] animate-pulse">
+                    <div className="w-2 h-2 rounded-full bg-current"></div>
+                    Buffering...
+                  </span>
+                ) : isPlaying ? (
                   <span className="flex items-center gap-1.5 text-[var(--tg-theme-button-color)]">
                     <div className="flex items-end gap-[2px] h-3">
                       <div className="w-[3px] bg-current animate-eq h-full rounded-sm"></div>
