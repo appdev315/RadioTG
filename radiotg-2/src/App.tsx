@@ -152,11 +152,11 @@ export default function App() {
       
       if (isHls && Hls.isSupported()) {
         const hls = new Hls({
-          liveSyncDurationCount: 3,
-          maxBufferLength: 30,
-          maxMaxBufferLength: 60,
+          liveSyncDurationCount: 10,
+          maxBufferLength: 60,
+          maxMaxBufferLength: 600,
           enableWorker: true,
-          lowLatencyMode: true,
+          lowLatencyMode: false,
           backBufferLength: 0, // No need for radio usually
         });
         
@@ -270,19 +270,39 @@ export default function App() {
         ref={audioRef}
         onEnded={() => setIsPlaying(false)}
         onError={() => {
-          setIsPlaying(false);
+          // Attempt recovery on actual errors instead of just failing silently
+          if (isPlaying && currentStation) {
+            console.log("Stream error, attempting recovery...");
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = setTimeout(handleRetry, 3000);
+          } else {
+            setIsPlaying(false);
+            setIsBuffering(false);
+          }
+        }}
+        onWaiting={() => {
+          setIsBuffering(true);
+          // Only reconnect if we're stuck waiting for a long time
+          if (isPlaying) {
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = setTimeout(() => {
+              if (audioRef.current && audioRef.current.readyState < 3) {
+                console.log("Stream waiting too long, attempting recovery...");
+                handleRetry();
+              }
+            }, 10000);
+          }
+        }}
+        onPlaying={() => {
+          setIsBuffering(false);
+          if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        }}
+        onCanPlay={() => {
           setIsBuffering(false);
         }}
-        onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => setIsBuffering(false)}
-        onCanPlay={() => setIsBuffering(false)}
         onStalled={() => {
-          if (isPlaying) {
-            console.log("Stream stalled, attempting recovery in 2s...");
-            setIsBuffering(true);
-            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-            reconnectTimeoutRef.current = setTimeout(handleRetry, 2000);
-          }
+          // Browser stopped fetching data. This can happen if buffer is full, do NOT force reconnect here!
+          console.log("Stream stalled (buffer might be full).");
         }}
       />
     </div>
