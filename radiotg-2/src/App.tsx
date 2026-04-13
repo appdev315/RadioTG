@@ -153,8 +153,8 @@ export default function App() {
       if (isHls && Hls.isSupported()) {
         const hls = new Hls({
           liveSyncDurationCount: 10,
-          maxBufferLength: 60,
-          maxMaxBufferLength: 600,
+          maxBufferLength: 120,
+          maxMaxBufferLength: 1200,
           enableWorker: true,
           lowLatencyMode: false,
           backBufferLength: 0, // No need for radio usually
@@ -163,6 +163,14 @@ export default function App() {
         hls.loadSource(url);
         hls.attachMedia(audioRef.current);
         hlsRef.current = hls;
+
+        hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+          // Force the highest quality level specifically to prevent
+          // stereo/mono channel jumps during adaptive bitrate switching
+          if (data.levels && data.levels.length > 0) {
+            hls.currentLevel = data.levels.length - 1;
+          }
+        });
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (data.fatal) {
