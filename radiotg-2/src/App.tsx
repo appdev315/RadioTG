@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import WebApp from '@twa-dev/sdk';
 import { Globe } from 'lucide-react';
 import stationsData from './stations.json';
@@ -11,7 +11,6 @@ import { StationList } from './components/StationList';
 import { Player } from './components/Player';
 import { CategoryFilter } from './components/CategoryFilter';
 import { translations, Language } from './i18n';
-import Hls from 'hls.js';
 
 export interface Station {
   id: string;
@@ -25,7 +24,7 @@ export default function App() {
   const [lang, setLang] = useState<Language>('en');
   const t = translations[lang];
 
-  const categories = [
+  const categories = useMemo(() => [
     { id: 'all', name: t.categories.all },
     { id: 'favorites', name: t.categories.favorites },
     { id: 'top', name: t.categories.top },
@@ -39,14 +38,14 @@ export default function App() {
     { id: 'jazz', name: t.categories.jazz },
     { id: 'classical', name: t.categories.classical },
     { id: 'kids', name: t.categories.kids },
-  ];
+  ], [t]);
 
-  const [stations, setStations] = useState<Station[]>(stationsData);
   const [activeCategory, setActiveCategory] = useState('all');
   const [currentStation, setCurrentStation] = useState<Station | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [volume, setVolume] = useState(1);
+  const [isVisible, setIsVisible] = useState(true);
   const [favorites, setFavorites] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('radiotg_favorites');
@@ -56,18 +55,23 @@ export default function App() {
     }
   });
   
-  const [isBuffering, setIsBuffering] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      setIsVisible(!document.hidden);
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('radiotg_favorites', JSON.stringify(favorites));
   }, [favorites]);
 
-  const toggleFavorite = (id: string) => {
+  const toggleFavorite = useCallback((id: string) => {
     setFavorites(prev => prev.includes(id) ? prev.filter(f => f !== id) : [...prev, id]);
-  };
+  }, []);
 
   useEffect(() => {
     WebApp.ready();
@@ -87,7 +91,7 @@ export default function App() {
     document.documentElement.style.setProperty('--tg-theme-button-text-color', WebApp.themeParams.button_text_color || '#ffffff');
   }, []);
 
-  useEffect(() => {
+  const stations = useMemo(() => {
     let filtered = stationsData;
     if (activeCategory === 'favorites') {
       filtered = filtered.filter(s => favorites.includes(s.id));
@@ -95,130 +99,62 @@ export default function App() {
       filtered = filtered.filter(s => s.category === activeCategory);
     }
     if (searchQuery) {
-      filtered = filtered.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase()));
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(s => s.name.toLowerCase().includes(query));
     }
-    setStations(filtered);
+    return filtered;
   }, [activeCategory, searchQuery, favorites]);
 
-  useEffect(() => {
+  const handleVolumeChange = useCallback((newVolume: number) => {
+    setVolume(newVolume);
     if (audioRef.current) {
-      audioRef.current.volume = volume;
+      audioRef.current.volume = newVolume;
     }
-  }, [volume]);
+  }, []);
 
-  const cleanupHls = () => {
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
-  };
-
-  const handlePlayPause = (forcePause?: boolean) => {
+  const handlePlayPause = useCallback((forcePause?: boolean) => {
     if (!audioRef.current) return;
     
     if (isPlaying || forcePause === true) {
       audioRef.current.pause();
       setIsPlaying(false);
-      setIsBuffering(false);
     } else {
       audioRef.current.play().then(() => {
         setIsPlaying(true);
       }).catch(e => {
         console.error("Playback failed", e);
         setIsPlaying(false);
-        setIsBuffering(false);
       });
     }
-  };
+  }, [isPlaying]);
 
-  const handleStationSelect = (station: Station) => {
+  const handleStationSelect = useCallback((station: Station) => {
     if (currentStation?.id === station.id) {
       handlePlayPause();
       return;
     }
     
-    cleanupHls();
     setCurrentStation(station);
     setIsPlaying(true);
-    setIsBuffering(true);
     
     if (audioRef.current) {
-      const url = station.stream;
-      const isHls = url.includes('.m3u8') || url.includes('/playlist.m3u8');
-      
-      if (isHls && Hls.isSupported()) {
-        const hls = new Hls({
-          liveSyncDurationCount: 10,
-          maxBufferLength: 120,
-          maxMaxBufferLength: 1200,
-          enableWorker: true,
-          lowLatencyMode: false,
-          backBufferLength: 0, // No need for radio usually
-        });
-        
-        hls.loadSource(url);
-        hls.attachMedia(audioRef.current);
-        hlsRef.current = hls;
-
-        hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
-          // Force the highest quality level specifically to prevent
-          // stereo/mono channel jumps during adaptive bitrate switching
-          if (data.levels && data.levels.length > 0) {
-            hls.currentLevel = data.levels.length - 1;
-          }
-        });
-
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) {
-            switch (data.type) {
-              case Hls.ErrorTypes.NETWORK_ERROR:
-                console.log("fatal network error encountered, try to recover");
-                hls.startLoad();
-                break;
-              case Hls.ErrorTypes.MEDIA_ERROR:
-                console.log("fatal media error encountered, try to recover");
-                hls.recoverMediaError();
-                break;
-              default:
-                cleanupHls();
-                break;
-            }
-          }
-        });
-      } else {
-        audioRef.current.src = url;
-      }
-      
+      audioRef.current.src = station.stream;
       audioRef.current.play().catch(e => {
         console.error("Playback failed", e);
         setIsPlaying(false);
-        setIsBuffering(false);
       });
     }
-  };
-
-  const handleRetry = () => {
-    if (currentStation && audioRef.current) {
-      console.log("Retrying playback for station:", currentStation.name);
-      const wasPlaying = isPlaying;
-      handleStationSelect(currentStation);
-      if (!wasPlaying) setIsPlaying(false);
-    }
-  };
+  }, [currentStation, handlePlayPause]);
 
   return (
     <div className="min-h-screen bg-[var(--tg-theme-bg-color)] text-[var(--tg-theme-text-color)] pb-24 font-sans">
-      <div className="sticky top-0 z-10 bg-[var(--tg-theme-bg-color)]/90 backdrop-blur-md border-b border-[var(--tg-theme-hint-color)]/20 pt-4 pb-2 px-4">
+      <div className="sticky top-0 z-10 bg-[var(--tg-theme-bg-color)] border-b border-[var(--tg-theme-hint-color)]/10 pt-4 pb-2 px-4 shadow-sm">
         <div className="flex justify-between items-center mb-3">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold">RadioTG</h1>
             <div className="flex flex-col">
-              <span className="text-[10px] bg-[var(--tg-theme-button-color)]/20 text-[var(--tg-theme-button-color)] px-1.5 py-0.5 rounded font-mono leading-none">v0.0.2</span>
-              <span className="text-[8px] opacity-30 font-mono mt-0.5">Build: 07:03</span>
+              <span className="text-[10px] bg-[var(--tg-theme-button-color)]/20 text-[var(--tg-theme-button-color)] px-1.5 py-0.5 rounded font-mono leading-none">v0.0.3</span>
+              <span className="text-[8px] opacity-30 font-mono mt-0.5">Build: 07:15</span>
             </div>
           </div>
           <button 
@@ -260,10 +196,9 @@ export default function App() {
       <Player 
         station={currentStation} 
         isPlaying={isPlaying} 
-        isBuffering={isBuffering}
         onPlayPause={handlePlayPause} 
         volume={volume}
-        onVolumeChange={setVolume}
+        onVolumeChange={handleVolumeChange}
         nowPlayingText={t.nowPlaying}
         pausedText={t.paused}
         sleepTimerText={t.sleepTimer}
@@ -272,46 +207,13 @@ export default function App() {
         supportAlertText={t.supportAlert}
         isFavorite={currentStation ? favorites.includes(currentStation.id) : false}
         onToggleFavorite={toggleFavorite}
+        isVisible={isVisible}
       />
       
       <audio 
         ref={audioRef}
         onEnded={() => setIsPlaying(false)}
-        onError={() => {
-          // Attempt recovery on actual errors instead of just failing silently
-          if (isPlaying && currentStation) {
-            console.log("Stream error, attempting recovery...");
-            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-            reconnectTimeoutRef.current = setTimeout(handleRetry, 3000);
-          } else {
-            setIsPlaying(false);
-            setIsBuffering(false);
-          }
-        }}
-        onWaiting={() => {
-          setIsBuffering(true);
-          // Only reconnect if we're stuck waiting for a long time
-          if (isPlaying) {
-            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-            reconnectTimeoutRef.current = setTimeout(() => {
-              if (audioRef.current && audioRef.current.readyState < 3) {
-                console.log("Stream waiting too long, attempting recovery...");
-                handleRetry();
-              }
-            }, 10000);
-          }
-        }}
-        onPlaying={() => {
-          setIsBuffering(false);
-          if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-        }}
-        onCanPlay={() => {
-          setIsBuffering(false);
-        }}
-        onStalled={() => {
-          // Browser stopped fetching data. This can happen if buffer is full, do NOT force reconnect here!
-          console.log("Stream stalled (buffer might be full).");
-        }}
+        onError={() => setIsPlaying(false)}
       />
     </div>
   );

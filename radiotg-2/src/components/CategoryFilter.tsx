@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -12,7 +13,7 @@ interface CategoryFilterProps {
   onSelect: (id: string) => void;
 }
 
-export function CategoryFilter({ categories, activeCategory, onSelect }: CategoryFilterProps) {
+export const CategoryFilter = memo(({ categories, activeCategory, onSelect }: CategoryFilterProps) => {
   return (
     <div className="flex overflow-x-auto hide-scrollbar gap-2 pb-2 -mx-4 px-4">
       {categories.map((cat) => (
@@ -31,4 +32,4 @@ export function CategoryFilter({ categories, activeCategory, onSelect }: Categor
       ))}
     </div>
   );
-}
+});

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Station } from '../App';
 import { Play, Pause } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -12,7 +13,7 @@ interface StationListProps {
 }
 
 // StationList component displays a grid of radio stations with favorite toggles.
-export function StationList({ stations, currentStation, isPlaying, onSelect, emptyStateText }: StationListProps) {
+export const StationList = memo(({ stations, currentStation, isPlaying, onSelect, emptyStateText }: StationListProps) => {
   if (stations.length === 0) {
     return (
       <div className="text-center py-10 text-[var(--tg-theme-hint-color)]">
@@ -76,4 +77,4 @@ export function StationList({ stations, currentStation, isPlaying, onSelect, emp
       })}
     </div>
   );
-}
+});

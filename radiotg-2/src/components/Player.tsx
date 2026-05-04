@@ -1,14 +1,14 @@
-import { useState, useEffect, ChangeEvent } from 'react';
+import { useState, ChangeEvent } from 'react';
 import { Station } from '../App';
 import { Play, Pause, Radio, Timer, Heart, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import WebApp from '@twa-dev/sdk';
 import { twMerge } from 'tailwind-merge';
+import { TimerDisplay } from './TimerDisplay';
 
 interface PlayerProps {
   station: Station | null;
   isPlaying: boolean;
-  isBuffering?: boolean;
   onPlayPause: (forcePause?: boolean) => void;
   volume: number;
   onVolumeChange: (volume: number) => void;
@@ -20,12 +20,12 @@ interface PlayerProps {
   supportAlertText: string;
   isFavorite: boolean;
   onToggleFavorite: (id: string) => void;
+  isVisible: boolean;
 }
 
 export function Player({ 
   station, 
   isPlaying, 
-  isBuffering,
   onPlayPause, 
   volume,
   onVolumeChange,
@@ -36,46 +36,18 @@ export function Player({
   timerSetText,
   supportAlertText,
   isFavorite,
-  onToggleFavorite
+  onToggleFavorite,
+  isVisible
 }: PlayerProps) {
   const [showTimerMenu, setShowTimerMenu] = useState(false);
   const [timerMinutes, setTimerMinutes] = useState(0);
   const [endTime, setEndTime] = useState<number | null>(null);
-  const [timeLeft, setTimeLeft] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!endTime) {
-      setTimeLeft(null);
-      return;
-    }
-
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const remaining = endTime - now;
-
-      if (remaining <= 0) {
-        clearInterval(interval);
-        setEndTime(null);
-        setTimerMinutes(0);
-        setTimeLeft(null);
-        onPlayPause(true);
-      } else {
-        const m = Math.floor(remaining / 60000);
-        const s = Math.floor((remaining % 60000) / 1000);
-        setTimeLeft(`${m}:${s.toString().padStart(2, '0')}`);
-      }
-    }, 1000);
-
-    // Initial call to set immediately
-    const remaining = endTime - Date.now();
-    if (remaining > 0) {
-      const m = Math.floor(remaining / 60000);
-      const s = Math.floor((remaining % 60000) / 1000);
-      setTimeLeft(`${m}:${s.toString().padStart(2, '0')}`);
-    }
-
-    return () => clearInterval(interval);
-  }, [endTime, onPlayPause]);
+  const handleTimerEnd = () => {
+    setEndTime(null);
+    setTimerMinutes(0);
+    onPlayPause(true);
+  };
 
   const handleTimerChange = (e: ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value, 10);
@@ -98,6 +70,9 @@ export function Player({
   const handleSupport = () => {
     safeShowAlert(supportAlertText);
   };
+
+  const showEqualizer = isPlaying && isVisible;
+
   return (
     <AnimatePresence>
       {station && (
@@ -107,7 +82,7 @@ export function Player({
           exit={{ y: 100, opacity: 0 }}
           className="fixed bottom-0 left-0 right-0 p-4 z-50"
         >
-          <div className="bg-[var(--tg-theme-bg-color)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] dark:shadow-[0_-10px_40px_rgba(0,0,0,0.5)] border border-[var(--tg-theme-hint-color)]/20 rounded-2xl p-3 flex flex-col gap-3 backdrop-blur-xl bg-opacity-90">
+          <div className="bg-[var(--tg-theme-bg-color)] border-t border-[var(--tg-theme-hint-color)]/10 rounded-2xl p-3 flex flex-col gap-3 shadow-sm">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-xl overflow-hidden bg-[var(--tg-theme-hint-color)]/10 shrink-0">
               {station.logo ? (
@@ -129,18 +104,15 @@ export function Player({
                 {station.name}
               </div>
               <div className="text-xs text-[var(--tg-theme-hint-color)] truncate flex items-center gap-2">
-                {isBuffering ? (
-                  <span className="flex items-center gap-1.5 text-[var(--tg-theme-button-color)] animate-pulse">
-                    <div className="w-2 h-2 rounded-full bg-current"></div>
-                    Buffering...
-                  </span>
-                ) : isPlaying ? (
+                {isPlaying ? (
                   <span className="flex items-center gap-1.5 text-[var(--tg-theme-button-color)]">
-                    <div className="flex items-end gap-[2px] h-3">
-                      <div className="w-[3px] bg-current animate-eq h-full rounded-sm"></div>
-                      <div className="w-[3px] bg-current animate-eq-fast h-2/3 rounded-sm"></div>
-                      <div className="w-[3px] bg-current animate-eq-slow h-1/2 rounded-sm"></div>
-                    </div>
+                    {showEqualizer && (
+                      <div className="flex items-end gap-[2px] h-3">
+                        <div className="w-[3px] bg-current animate-eq h-full rounded-sm"></div>
+                        <div className="w-[3px] bg-current animate-eq-fast h-full rounded-sm"></div>
+                        <div className="w-[3px] bg-current animate-eq-slow h-full rounded-sm"></div>
+                      </div>
+                    )}
                     {nowPlayingText}
                   </span>
                 ) : (
@@ -150,22 +122,12 @@ export function Player({
             </div>
             
             <div className="flex items-center gap-2 shrink-0">
-              <button 
+              <TimerDisplay 
+                endTime={endTime} 
+                onTimerEnd={handleTimerEnd} 
+                sleepTimerText={sleepTimerText}
                 onClick={() => setShowTimerMenu(!showTimerMenu)}
-                className={twMerge(
-                  "w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-colors",
-                  endTime 
-                    ? "bg-[var(--tg-theme-button-color)]/20 text-[var(--tg-theme-button-color)]" 
-                    : "bg-[var(--tg-theme-hint-color)]/10 text-[var(--tg-theme-text-color)]"
-                )}
-                title={sleepTimerText}
-              >
-                {timeLeft ? (
-                  <span className="text-[10px] font-bold tabular-nums">{timeLeft}</span>
-                ) : (
-                  <Timer className="w-5 h-5" />
-                )}
-              </button>
+              />
               
               <button 
                 onClick={() => station && onToggleFavorite(station.id)}
